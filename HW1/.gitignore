@@ -1,0 +1,51 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# IDE and editor files
+.vs/
+.idea/
+.consulo/
+*.sln.iml
+
+# Auto-generated solution and project files
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity generated metadata for IDE files
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Build artifacts
+ExportedObj/
+.gradle/
+*.apk
+*.aab
+*.app
+*.unitypackage
+
+# Unity crash reports
+sysinfo.txt
+
+# OS-generated files
+.DS_Store
