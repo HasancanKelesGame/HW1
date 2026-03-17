@@ -88,7 +88,6 @@ Environment, character, and gameplay objects are built using Unity assets/prefab
 - `MusicToggle.cs`: background music toggle with key `M`.
 
 ## 12. Map Screenshot
-Add your final maze screenshot here for submission:
+<img width="874" height="878" alt="Screenshot 2026-03-17 at 23 46 42" src="https://github.com/user-attachments/assets/f05c8278-7d0e-47d6-a636-f041a5e59ea4" />
 
-`(Insert screenshot image in report or link it here)`
 
