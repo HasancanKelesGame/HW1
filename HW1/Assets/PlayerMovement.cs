@@ -6,30 +6,43 @@ using UnityEngine.InputSystem;
 namespace StarterAssets
 {
     [RequireComponent(typeof(CharacterController))]
+    [RequireComponent(typeof(StarterAssetsInputs))]
 #if ENABLE_INPUT_SYSTEM
     [RequireComponent(typeof(PlayerInput))]
 #endif
-    public class ThirdPersonController : MonoBehaviour
+    public class PlayerMovement : MonoBehaviour
     {
-        [Header("Player")]
+        [Header("Movement")]
         public float MoveSpeed = 3.0f;
         public float SprintSpeed = 5.5f;
-        public float SpeedChangeRate = 10.0f;
+        public float SpeedChangeRate = 12.0f;
+        [Range(0f, 1f)] public float AirControl = 0.35f;
+
+        [Header("Look")]
+        public Transform CameraRoot;
+        [Range(10f, 20000f)] public float MouseSensitivity = 7000f;
+        public float TopClamp = 85f;
+        public float BottomClamp = -85f;
 
         [Header("Jump")]
         public float JumpHeight = 1.2f;
         public float Gravity = -15.0f;
-
         public float JumpTimeout = 0.5f;
         public float FallTimeout = 0.15f;
-
         public bool Grounded;
 
-        private float _speed;
+        [Header("Push")]
+        public bool CanPush = true;
+        public LayerMask PushLayers = ~0;
+        [Range(0.5f, 20f)] public float PushStrength = 4f;
+        [Range(0.5f, 10f)] public float MaxPushSpeed = 2f;
+
+        private const float TerminalVelocity = 53.0f;
+
+        private float _cameraPitch;
         private float _animationBlend;
         private float _verticalVelocity;
-        private float _terminalVelocity = 53.0f;
-
+        private Vector3 _horizontalVelocity;
         private float _jumpTimeoutDelta;
         private float _fallTimeoutDelta;
 
@@ -39,36 +52,42 @@ namespace StarterAssets
         private int _animIDFreeFall;
         private int _animIDMotionSpeed;
 
-#if ENABLE_INPUT_SYSTEM
-        private PlayerInput _playerInput;
-#endif
-
         private Animator _animator;
         private CharacterController _controller;
         private StarterAssetsInputs _input;
 
         private bool _hasAnimator;
 
-        void Start()
+        private void Start()
         {
             _hasAnimator = TryGetComponent(out _animator);
             _controller = GetComponent<CharacterController>();
             _input = GetComponent<StarterAssetsInputs>();
 
-#if ENABLE_INPUT_SYSTEM
-            _playerInput = GetComponent<PlayerInput>();
-#endif
-
             AssignAnimationIDs();
 
             _jumpTimeoutDelta = JumpTimeout;
             _fallTimeoutDelta = FallTimeout;
+
+            if (CameraRoot == null && Camera.main != null)
+            {
+                CameraRoot = Camera.main.transform;
+            }
+
+            if (CameraRoot != null)
+            {
+                _cameraPitch = NormalizeAngle(CameraRoot.localEulerAngles.x);
+            }
         }
 
-        void Update()
+        private void Update()
         {
+            if (_controller == null || _input == null)
+                return;
+
             _hasAnimator = TryGetComponent(out _animator);
 
+            Look();
             GroundedCheck();
             JumpAndGravity();
             Move();
@@ -93,6 +112,35 @@ namespace StarterAssets
             }
         }
 
+        private void Look()
+        {
+            if (_input.look.sqrMagnitude < 0.0001f)
+                return;
+
+            float lookDelta = MouseSensitivity * Time.deltaTime;
+            float yawDelta = _input.look.x * lookDelta;
+            float pitchDelta = _input.look.y * lookDelta;
+
+            // Horizontal look rotates the whole player, affecting direction and camera yaw.
+            transform.Rotate(Vector3.up * yawDelta, Space.World);
+
+            // Vertical look only rotates the view.
+            _cameraPitch += pitchDelta;
+            _cameraPitch = Mathf.Clamp(_cameraPitch, BottomClamp, TopClamp);
+
+            if (CameraRoot != null)
+            {
+                if (CameraRoot.IsChildOf(transform))
+                {
+                    CameraRoot.localRotation = Quaternion.Euler(_cameraPitch, 0f, 0f);
+                }
+                else
+                {
+                    CameraRoot.rotation = Quaternion.Euler(_cameraPitch, transform.eulerAngles.y, 0f);
+                }
+            }
+        }
+
         private void Move()
         {
             float targetSpeed = _input.sprint ? SprintSpeed : MoveSpeed;
@@ -100,25 +148,28 @@ namespace StarterAssets
             if (_input.move == Vector2.zero)
                 targetSpeed = 0f;
 
-            float currentHorizontalSpeed =
-                new Vector3(_controller.velocity.x, 0, _controller.velocity.z).magnitude;
+            float inputMagnitude = _input.analogMovement
+                ? _input.move.magnitude
+                : (_input.move == Vector2.zero ? 0f : 1f);
+            Vector3 inputDirection = new Vector3(_input.move.x, 0f, _input.move.y);
+            inputDirection = Vector3.ClampMagnitude(inputDirection, 1f);
 
-            float speedOffset = 0.1f;
-            float inputMagnitude = _input.analogMovement ? _input.move.magnitude : 1f;
+            Vector3 worldDirection =
+                (transform.right * inputDirection.x + transform.forward * inputDirection.z).normalized;
+            Vector3 targetHorizontalVelocity = worldDirection * (targetSpeed * inputMagnitude);
 
-            if (currentHorizontalSpeed < targetSpeed - speedOffset ||
-                currentHorizontalSpeed > targetSpeed + speedOffset)
+            if (Grounded)
             {
-                _speed = Mathf.Lerp(
-                    currentHorizontalSpeed,
-                    targetSpeed * inputMagnitude,
-                    Time.deltaTime * SpeedChangeRate);
-
-                _speed = Mathf.Round(_speed * 1000f) / 1000f;
+                // Grounded movement is direct to avoid drifting/ice-like controls.
+                _horizontalVelocity = targetHorizontalVelocity;
             }
             else
             {
-                _speed = targetSpeed;
+                float acceleration = SpeedChangeRate * AirControl;
+                _horizontalVelocity = Vector3.MoveTowards(
+                    _horizontalVelocity,
+                    targetHorizontalVelocity,
+                    acceleration * Time.deltaTime);
             }
 
             _animationBlend = Mathf.Lerp(
@@ -129,17 +180,8 @@ namespace StarterAssets
             if (_animationBlend < 0.01f)
                 _animationBlend = 0f;
 
-            // Rotate player (A / D)
-            float turn = _input.move.x;
-            transform.Rotate(Vector3.up * turn * 180f * Time.deltaTime);
-
-            // Move forward/backward (W / S)
-            float forward = _input.move.y;
-            Vector3 moveDirection = transform.forward * forward;
-
             _controller.Move(
-                moveDirection * (_speed * Time.deltaTime)
-                + new Vector3(0, _verticalVelocity, 0) * Time.deltaTime);
+                (_horizontalVelocity + new Vector3(0f, _verticalVelocity, 0f)) * Time.deltaTime);
 
             if (_hasAnimator)
             {
@@ -186,8 +228,58 @@ namespace StarterAssets
                 _input.jump = false;
             }
 
-            if (_verticalVelocity < _terminalVelocity)
+            if (_verticalVelocity > -TerminalVelocity)
                 _verticalVelocity += Gravity * Time.deltaTime;
+        }
+
+        private void OnControllerColliderHit(ControllerColliderHit hit)
+        {
+            if (!CanPush)
+                return;
+
+            if (_input == null || _input.move.sqrMagnitude < 0.0001f)
+                return;
+
+            Rigidbody body = hit.collider.attachedRigidbody;
+
+            if (body == null || body.isKinematic)
+                return;
+
+            int bodyLayerMask = 1 << body.gameObject.layer;
+            if ((bodyLayerMask & PushLayers.value) == 0)
+                return;
+
+            // Ignore downward hits so we do not push objects under the player.
+            if (hit.moveDirection.y < -0.3f)
+                return;
+
+            Vector3 pushDirection = new Vector3(hit.moveDirection.x, 0f, hit.moveDirection.z).normalized;
+            if (pushDirection.sqrMagnitude < 0.0001f)
+                return;
+
+            Vector3 playerHorizontalDirection = new Vector3(_horizontalVelocity.x, 0f, _horizontalVelocity.z);
+            if (playerHorizontalDirection.sqrMagnitude < 0.0001f)
+                return;
+
+            float pushAlignment = Vector3.Dot(playerHorizontalDirection.normalized, pushDirection);
+            if (pushAlignment <= 0f)
+                return;
+
+            body.AddForce(pushDirection * (PushStrength * pushAlignment), ForceMode.Acceleration);
+
+            Vector3 bodyHorizontalVelocity = new Vector3(body.velocity.x, 0f, body.velocity.z);
+            if (bodyHorizontalVelocity.sqrMagnitude > MaxPushSpeed * MaxPushSpeed)
+            {
+                bodyHorizontalVelocity = bodyHorizontalVelocity.normalized * MaxPushSpeed;
+                body.velocity = new Vector3(bodyHorizontalVelocity.x, body.velocity.y, bodyHorizontalVelocity.z);
+            }
+        }
+
+        private static float NormalizeAngle(float angle)
+        {
+            if (angle > 180f)
+                angle -= 360f;
+            return angle;
         }
 
         // Fix animation event warnings
